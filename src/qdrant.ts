@@ -6,9 +6,11 @@ import { tool } from "ai";
 
 const MESSAGES_COLLECTION = "messages";
 
-const qdrant = new QdrantClient({
-  url: "https://qdrant-p08s4w8swogskos0cks4088w.dev.hedium.nl:6333",
+export const qdrant = new QdrantClient({
+  url: "https://qdrant-p08s4w8swogskos0cks4088w.dev.hedium.nl",
+  checkCompatibility: false,
   apiKey: process.env.QDRANT_API_KEY,
+  port: 443,
 });
 
 export async function upsertMessage(message: Message) {
@@ -16,7 +18,7 @@ export async function upsertMessage(message: Message) {
 
   const contentPoints = contentChunks.map((vector, index) => {
     return {
-      id: `${message.id}-text-${index}`,
+      id: crypto.randomUUID(),
       vector,
       payload: createPayload(message),
     };
@@ -24,7 +26,7 @@ export async function upsertMessage(message: Message) {
 
   const attachmentPoints = attachments.map((vector, index) => {
     return {
-      id: `${message.id}-attachment-${index}`,
+      id: crypto.randomUUID(),
       vector,
       payload: createPayload(message),
     };
@@ -38,32 +40,61 @@ export async function upsertMessage(message: Message) {
 export async function deleteMessage(message: PartialMessage | Message) {
   await qdrant.delete(MESSAGES_COLLECTION, {
     filter: {
-      should: [{ key: "id", match: { value: message.id } }],
+      should: [{ key: "message.id", match: { value: message.id } }],
     },
   });
 }
 
 const SearchMessagesZod = z.object({
-  query: z.string(),
-  by_authors: z.array(z.string()).optional(),
-  limit: z.number().max(100).default(5),
+  query: z.string().describe("The query to search for"),
+  by_author: z.number().optional().describe("Search by author"),
+  by_channel: z.number().optional().describe("Search by channel"),
+  limit: z.number().max(100).default(5).describe("Limit the number of results"),
 });
 type SearchMessagesArgs = z.infer<typeof SearchMessagesZod>;
 
+function buildQdrantFilter(
+  args: Pick<SearchMessagesArgs, "by_author" | "by_channel">
+) {
+  const filters = [];
+
+  if (args.by_author) {
+    filters.push({
+      should: [{ key: "author.id", match: { value: args.by_author } }],
+    });
+  }
+
+  if (args.by_channel) {
+    filters.push({
+      should: [{ key: "channel.id", match: { value: args.by_channel } }],
+    });
+  }
+
+  if (filters.length === 0) {
+    return undefined;
+  }
+
+  if (filters.length === 1) {
+    return filters[0];
+  }
+
+  return { must: filters }; // Or use `should` if you want an OR condition between filter types
+}
+
 export async function searchMessages(args: SearchMessagesArgs) {
-  const { query, by_authors, limit } = SearchMessagesZod.parse(args);
+  const { query, by_author, by_channel, limit } = SearchMessagesZod.parse(args);
 
   const embeddedQuery = await embedTextContent(query);
+
+  const filter = buildQdrantFilter({
+    by_author,
+    by_channel,
+  });
 
   const results = await qdrant.search(MESSAGES_COLLECTION, {
     vector: embeddedQuery,
     limit,
-    filter: by_authors && {
-      should: by_authors.map((author) => ({
-        key: "author.id",
-        match: { value: author },
-      })),
-    },
+    filter,
   });
 
   return results.map((result) => {
@@ -77,6 +108,9 @@ export async function searchMessages(args: SearchMessagesArgs) {
 type MessagePayload = ReturnType<typeof createPayload>;
 function createPayload(message: Message) {
   return {
+    channel: {
+      id: message.channel.id,
+    },
     message: {
       id: message.id,
       content: message.content,
@@ -85,15 +119,14 @@ function createPayload(message: Message) {
       id: message.author.id,
       name: message.author.displayName,
     },
-    content: message.content,
   };
 }
 
 export const getMessageTool = tool({
   description: "Search for messages in the database",
   parameters: SearchMessagesZod,
-  execute: async ({ query, by_authors, limit }) => {
-    const results = await searchMessages({ query, by_authors, limit });
+  execute: async (args) => {
+    const results = await searchMessages(args);
 
     return results;
   },

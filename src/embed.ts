@@ -2,11 +2,11 @@ import {
   BedrockRuntimeClient,
   InvokeModelCommand,
 } from "@aws-sdk/client-bedrock-runtime";
-import type { Attachment, Message } from "discord.js";
+import type { Message } from "discord.js";
 import { chunk } from "llm-chunk";
 
 const bedrock = new BedrockRuntimeClient({
-  region: "us-east-1",
+  region: "eu-central-1",
   credentials: {
     accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
@@ -15,7 +15,7 @@ const bedrock = new BedrockRuntimeClient({
 
 export async function embedDiscordMessage(message: Message) {
   const embeddedAttachmentsPromises = message.attachments.map((attachment) =>
-    embedAttachment(attachment)
+    embedImage(attachment.url)
   );
 
   const contentChunksPromises = chunk(message.content, {
@@ -35,8 +35,8 @@ export async function embedDiscordMessage(message: Message) {
 
 const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25mb
 
-async function embedAttachment(attachment: Attachment) {
-  const base64String = await fetch(attachment.url)
+export async function embedImage(url: string) {
+  const base64String = await fetch(url)
     .then((res) => res.arrayBuffer())
     .then((buffer) => Buffer.from(buffer).toString("base64"));
 
@@ -48,23 +48,28 @@ async function embedAttachment(attachment: Attachment) {
   const command = new InvokeModelCommand({
     modelId: "amazon.titan-embed-image-v1",
     body: JSON.stringify({
-      imageInput: base64String,
+      inputImage: base64String,
     }),
   });
 
-  const embedding = await bedrock
-    .send(command)
-    .then((res) => JSON.parse(res.body.transformToString()).embedding);
+  try {
+    const embedding = await bedrock
+      .send(command)
+      .then((res) => JSON.parse(res.body.transformToString()).embedding);
 
-  return embedding;
+    return embedding;
+  } catch (e) {
+    console.error(url);
+    throw e;
+  }
 }
 
 export async function embedTextContent(content: string) {
   // Do embed
   const command = new InvokeModelCommand({
-    modelId: "amazon.titan-embed-text-v1",
+    modelId: "amazon.titan-embed-image-v1",
     body: JSON.stringify({
-      textInput: content,
+      inputText: content,
     }),
   });
 

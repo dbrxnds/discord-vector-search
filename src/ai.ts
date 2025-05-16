@@ -2,29 +2,31 @@ import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
 import { AWS_CREDENTIALS } from "./helpers";
 import { generateText } from "ai";
 import { getMessageTool } from "./qdrant";
+import { ResultAsync } from "neverthrow";
 
 const bedrock = createAmazonBedrock({
   ...AWS_CREDENTIALS,
   region: "eu-central-1",
 });
 
-export async function handleMention(messageContent: string) {
-  const { text } = await generateText({
-    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
-    maxSteps: 5,
-    system: createSystemPrompt(),
-    tools: {
-      getMessageTool,
-    },
-    messages: [
-      {
-        role: "user",
-        content: messageContent,
+export function handleSearch(messageContent: string) {
+  return ResultAsync.fromPromise(
+    generateText({
+      model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
+      maxSteps: 5,
+      system: createSystemPrompt(),
+      tools: {
+        getMessageTool,
       },
-    ],
-  });
-
-  return text;
+      messages: [
+        {
+          role: "user",
+          content: messageContent,
+        },
+      ],
+    }),
+    (e) => e
+  );
 }
 
 function createSystemPrompt() {
@@ -32,6 +34,17 @@ function createSystemPrompt() {
       You are a search engine that helps users find relevant messages in a Discord server based on their query.
     
       When linking to a message: use the following format: https://discord.com/channels/597442427158003723/{channelId}/{messageId}
+
+      <communication>
+        - NEVER!! yap. Just list the results in a concise manner.
+        - Refer to the user in the second person and yourself in the first person.
+        - NEVER! lie or make things up.
+        - Always share a link to the message in your response.
+        - NEVER! add a link to a piece of text. Always link to the message by ending the sentence with "Link".
+        - If you can't find any results, just say so.
+        - ALWAYS mention what the message is about in your response. 
+        - Do NOT! give any additional information. Just list the results.
+      </communication>
   
       <search_rules>
         - If the user asks for a specific message, you NEED TO! search for it by the message id.
@@ -42,16 +55,6 @@ function createSystemPrompt() {
         - You can extract the channel id from the message content by looking for the <#channelId> format.
         - Use the mentioned users to search for messages by the user id.
       </search_rules>
-  
-      <communication>
-        - Do NOT yap. Just give a short and concise answer that gets to the point.
-        - Refer to the user in the second person and yourself in the first person.
-        - NEVER! lie or make things up.
-        - Always share a link to the message in your response.
-        - NEVER! add a link to a piece of text. Always link to the message by ending the sentence with "Link".
-        - If you can't find any results, just say so.
-        - ALWAYS mention what the message is about in your response.
-      </communication>
   
       <tool_calling>
         You have tools at your disposal to solve the user's task. Follow these rules regarding tool calls:

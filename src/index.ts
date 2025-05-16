@@ -1,5 +1,5 @@
 import { discord } from "./helpers";
-import { handleMention } from "./ai";
+import { handleSearch } from "./ai";
 import { ApplicationCommandOptionType } from "discord.js";
 
 discord.login(process.env.DISCORD_API_KEY);
@@ -32,12 +32,22 @@ discord.on("ready", async (client) => {
     if (commandName === "search") {
       const query = interaction.options.getString("query", true);
 
-      const [, text] = await Promise.all([
+      const [, searchResult] = await Promise.all([
         interaction.deferReply(),
-        handleMention(query),
+        handleSearch(query),
       ]);
 
-      await interaction.editReply(text);
+      if (searchResult.isErr()) {
+        const errorMessage =
+          searchResult.error instanceof Error
+            ? searchResult.error.message
+            : "An unknown error occurred";
+
+        await interaction.editReply(`Error: ${errorMessage}`);
+        return;
+      }
+
+      await interaction.editReply(searchResult.value.text);
     }
   });
 
